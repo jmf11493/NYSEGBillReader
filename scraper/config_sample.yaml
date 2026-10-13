@@ -1,0 +1,5 @@
+directory: "C:/My Bills"
+pod_id: "1234"
+meter_number: "1234"
+output_csv_directory: "C:/output"
+output_data_directory: "C:/output"
