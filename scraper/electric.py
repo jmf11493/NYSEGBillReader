@@ -3,43 +3,45 @@ from datetime import datetime
 
 
 class ElectricRegex:
-    start_regex = ''
-    end_regex = ''
-    alt_name = ''
-
-    kwh = ''
-    rate = ''
-    total = ''
-
-    values = []
 
     def __init__(self,
                  name: str,
-                 contents: str,
-                 alt_name: str | None = None,
                  start_regex: str | None = None,
-                 end_regex: str | None = None
+                 end_regex: str | None = None,
+                 start_month: str | None = None,
+                 end_month: str | None = None
     ):
+        self.start_regex = ''
+        self.end_regex = ''
+        self.start_month = ''
+        self.end_month = ''
+        self.kwh = ''
+        self.rate = ''
+        self.total = ''
         self.name = name
-        self.contents = contents
         if start_regex is not None:
             self.start_regex = start_regex
         if end_regex is not None:
             self.end_regex = end_regex
-        if alt_name is not None:
-            self.alt_name = alt_name
-        self._search(contents)
+        if start_month is not None:
+            self.start_month = start_month
+        if end_month is not None:
+            self.end_month = end_month
+        self.values = []
+        self.multi_values = []
 
-    def _search(self, contents: str):
+    def search(self, contents: str):
         names = [self.name]
+        if self.start_month and self.end_month:
+            names.append(f'{self.name} - {self.start_month}')
+            names.append(f'{self.name} - {self.end_month}')
         regex = ''
         name_exists = False
+        find_match = False
 
         keys = ['kwh', 'rate', 'total']
 
-        if self.alt_name:
-            names.append(self.alt_name)
-        for name in names:
+        for index, name in enumerate(names):
             # colon_name = name + ':'
             # definitions end in colon, exclude these
             # highest index, lowest index is the definition
@@ -48,18 +50,27 @@ class ElectricRegex:
             regex = f'{self.start_regex}{name}{self.end_regex}'
             match = re.search(regex, contents)
             if match:
+                find_match = True
                 group_count = (re.compile(regex)).groups
                 keys = keys[len(keys)-group_count:len(keys)]
                 kwargs = dict(zip(keys, match.groups()))
-                print(kwargs)
                 self.set_values(**kwargs)
-                return
+                if index > 0:
+                    self.multi_values.append(self.values)
+                if len(names) == 1:
+                    return
             else:
                 continue
-        group_count = (re.compile(regex)).groups
-        params = ['n/a' for _ in range(0, group_count)]
-        self.set_values(*params)
-        if name_exists:
+        # TODO clean up
+        if not find_match:
+            group_count = (re.compile(regex)).groups
+            params = ['n/a' for _ in range(0, group_count)]
+            self.set_values(*params)
+        if self.start_month and self.end_month:
+            if not self.multi_values:
+                self.multi_values.append(self.values)
+                self.multi_values.append(['n/a' for _ in range(0, group_count)])
+        if name_exists and not find_match:
             # name is in the contents but the regex failed to match
             print(regex)
             print(self.name)
@@ -73,12 +84,15 @@ class ElectricRegex:
         if self.rate != '' and self.rate != 'n/a' and '.' not in self.rate:
             self.rate = f'0.{self.rate}'
         self.total = total.strip() if total is not None else ''
+        if self.total.startswith('-'):
+            self.rate = f'-{self.rate}'
 
         values = [self.kwh, self.rate, self.total]
         self.values = [v for v in values if v != '']
 
+
     def get_values_list(self):
-        return self.values
+        return self.values if not self.multi_values else self.multi_values
 
     def get_values(self):
         if len(self.values) == 3:
@@ -91,30 +105,23 @@ class ElectricRegex:
 
 class ElectricBillDetails:
 
-    basic_charge = None
-    excess_generation = ''
-    current_generation = ''
-    prior_excess_generation = ''
-    current_usage = ''
-    net_usage_billed = ''
-    charge = ''
-    average_daily_use_current_year = ''
-    average_daily_temp_current_year = ''
-    average_daily_use_past_year = ''
-    average_daily_temp_past_year = ''
-    current_year = ''
-    past_year = ''
-    calculated_ppkwh = 'n/a'
-    price_per_kwh = 'n/a'
-    charges = []
-    taxes = []
-    misc_charges = []
-
-    money_regex = '(-?\\d+\\.\\d{2})'
-    small_money_regex = '(-?\\d\\.\\d{2})'
-    amount_regex = f'\\${money_regex}'
-
     def __init__(self, contents: str, pod_id: str, meter_number: str, file_name: str):
+        self.basic_charge = None
+        self.excess_generation = ''
+        self.current_generation = ''
+        self.prior_excess_generation = ''
+        self.current_usage = ''
+        self.net_usage_billed = ''
+        self.charge = ''
+        self.average_daily_use_current_year = ''
+        self.average_daily_temp_current_year = ''
+        self.average_daily_use_past_year = ''
+        self.average_daily_temp_past_year = ''
+        self.current_year = ''
+        self.past_year = ''
+        self.calculated_ppkwh = 'n/a' # TODO deprecate
+        self.price_per_kwh = 'n/a'
+        self.charges = []
         self.pod_id = pod_id
         self.meter_number = meter_number
         self.contents = contents
@@ -130,7 +137,6 @@ class ElectricBillDetails:
             ppkwh_match = re.search(r'\$(\d+\.\d+)', ppkwh_str)
             if ppkwh_match:
                 self.price_per_kwh = ppkwh_match.group(1)
-            print('Actual ppkwh:', self.price_per_kwh)
 
     def _set_details(self):
         if 'PoD ID:' not in self.contents:
@@ -139,8 +145,6 @@ class ElectricBillDetails:
         service_from = self.contents.split('Service from:PoD ID:')[1].split(self.pod_id)[0]
 
         self._set_charges(service_from)
-        self._set_taxes()
-        self._set_misc_charges()
         self._set_generation_and_useage_info()
         self._set_average_info()
 
@@ -152,65 +156,45 @@ class ElectricBillDetails:
         return start_date.strftime('%b'), end_date.strftime('%b')
 
     def _set_charges(self, service_from: str):
+
+        money_regex = '(-?\\d+\\.\\d{2})'
+        small_money_regex = '(-?\\d\\.\\d{2})'
+        amount_regex = f'\\${money_regex}'
+
         start_month, end_month = self._get_start_end_month(service_from)
-        supply_regex = '(\\d+)kwh(\\d+)\\s*?@-?0\\.' + self.money_regex
-        revenue = 'Revenue decoupling mech'
-        merchant = 'Merchant function charge'
-        sbc_charge = 'SBC charge'
-        delivery_charge = 'Delivery charge'
-        transition_charge = 'Transition charge'
+        supply_regex = '(\\d+)kwh(\\d+)\\s*?@-?0\\.' + money_regex
 
         end_regex = '(?: - )*?(-?\\d{1,3}\\.\\d{2})'
-        basic_service_charge = 'Basic service charge'
 
         ec_start_regex = '.\\d{2}(\\d+)kwh(\\d+)\\s*?@-?0\\.'
         ec_end_regex = '(-?\\d{1,3}\\.\\d{2})'
 
-        self.charges = [
-            ElectricRegex(f'{basic_service_charge} - {start_month}', self.contents, alt_name=basic_service_charge, end_regex=end_regex),
-            ElectricRegex(f'{basic_service_charge} - {end_month}', self.contents, alt_name=basic_service_charge, end_regex=end_regex),
+        tax_end_regex = '(-?\\d+\\.\\d+)\\s*?%@(-?\\d+\\.\\d{2})'
 
-            ElectricRegex(f'{delivery_charge} - {start_month}', self.contents, alt_name=delivery_charge, start_regex=ec_start_regex, end_regex=ec_end_regex),
-            ElectricRegex(f'{delivery_charge} - {end_month}', self.contents, alt_name=delivery_charge, start_regex=ec_start_regex, end_regex=ec_end_regex),
-
-            ElectricRegex(f'{transition_charge} - {start_month}', self.contents, alt_name=transition_charge, start_regex=ec_start_regex, end_regex=ec_end_regex),
-            ElectricRegex(f'{transition_charge} - {end_month}', self.contents, alt_name=transition_charge, start_regex=ec_start_regex, end_regex=ec_end_regex),
-
-            ElectricRegex(f'{revenue} - {start_month}', self.contents, alt_name=revenue, start_regex=ec_start_regex, end_regex=ec_end_regex),
-            ElectricRegex(f'{revenue} - {end_month}', self.contents, alt_name=revenue, start_regex=ec_start_regex, end_regex=ec_end_regex),
-
-            ElectricRegex(f'{sbc_charge} - {start_month}', self.contents, alt_name=sbc_charge, start_regex=ec_start_regex, end_regex=ec_end_regex),
-            ElectricRegex(f'{sbc_charge} - {end_month}', self.contents, alt_name=sbc_charge, start_regex=ec_start_regex, end_regex=ec_end_regex),
-
-            ElectricRegex('Subtotal Electricity Delivery', self.contents, end_regex=self.amount_regex),
-            ElectricRegex('Supply charge', self.contents, end_regex=supply_regex),
-            ElectricRegex(f'{merchant} - {start_month}', self.contents, end_regex=supply_regex, alt_name=merchant),
-            ElectricRegex(f'{merchant} - {end_month}', self.contents, end_regex=supply_regex, alt_name=merchant),
-            ElectricRegex('Subtotal Electricity Supply', self.contents, end_regex=self.amount_regex),
-        ]
-        second_charge = self.charges[1].get_values_list()[0]
-        second_charge = float(second_charge) if second_charge != 'n/a' and second_charge != '' else 0.0
-        basic_charge = self.charges[0].get_values_list()[0]
-        self.basic_charge = float(basic_charge) + second_charge if basic_charge != '' else second_charge
-
-    def _set_taxes(self):
-        end_regex = '(-?\\d+\\.\\d+)\\s*?%@(-?\\d+\\.\\d{2})'
-        self.taxes = [
-            ElectricRegex('Taxes on delivery charges', self.contents, end_regex=end_regex),
-            ElectricRegex('County sales tax', self.contents, end_regex=end_regex),
-            ElectricRegex('Subtotal Electricity Taxes and Surcharges', self.contents, end_regex=self.amount_regex)
-        ]
-
-    def _set_misc_charges(self):
         space_regex = '\\s*?'
         space_number_regex = space_regex + '\\d'
-        money_space_regex = self.small_money_regex + space_regex
+        money_space_regex = small_money_regex + space_regex
         date_money_space_regex = '\\/\\d{2}' + money_space_regex
 
-        self.misc_charges = [
-            ElectricRegex('Payment & billing svcs charge', self.contents, start_regex=money_space_regex, end_regex=space_number_regex),
-            ElectricRegex('Payment & billing svcs charge sales tax', self.contents, start_regex=date_money_space_regex, end_regex=space_number_regex),
-            ElectricRegex('Payment & billing svcs GRT', self.contents, start_regex=date_money_space_regex, end_regex=space_number_regex),
+        self.charges = [
+            ElectricRegex('Basic service charge', end_regex=end_regex, start_month=start_month, end_month=end_month),
+            ElectricRegex('Delivery charge', start_regex=ec_start_regex, end_regex=ec_end_regex, start_month=start_month, end_month=end_month),
+            ElectricRegex('Transition charge', start_regex=ec_start_regex, end_regex=ec_end_regex, start_month=start_month, end_month=end_month),
+            ElectricRegex('Revenue decoupling mech', start_regex=ec_start_regex, end_regex=ec_end_regex, start_month=start_month, end_month=end_month),
+            ElectricRegex('SBC charge', start_regex=ec_start_regex, end_regex=ec_end_regex, start_month=start_month, end_month=end_month),
+            ElectricRegex('Recovery charge', start_regex=ec_start_regex, end_regex=ec_end_regex, start_month=start_month, end_month=end_month),
+            ElectricRegex('Subtotal Electricity Delivery', end_regex=amount_regex),
+            ElectricRegex('Supply charge', end_regex=supply_regex),
+            ElectricRegex('Merchant function charge', end_regex=supply_regex, start_month=start_month, end_month=end_month),
+            ElectricRegex('Subtotal Electricity Supply', end_regex=amount_regex),
+
+            ElectricRegex('Taxes on delivery charges', end_regex=tax_end_regex),
+            ElectricRegex('County sales tax', end_regex=tax_end_regex),
+            ElectricRegex('Subtotal Electricity Taxes and Surcharges', end_regex=amount_regex),
+
+            ElectricRegex('Payment & billing svcs charge', start_regex=money_space_regex, end_regex=space_number_regex),
+            ElectricRegex('Payment & billing svcs charge sales tax', start_regex=date_money_space_regex, end_regex=space_number_regex),
+            ElectricRegex('Payment & billing svcs GRT', start_regex=date_money_space_regex, end_regex=space_number_regex),
         ]
 
     def _set_generation_and_useage_info(self):
@@ -247,26 +231,55 @@ class ElectricBillDetails:
         self.current_year = average_info[2].split(' F')[1][:6]
         self.past_year = average_info[2].split(' F')[1][6:12]
 
-        # If billed for electric, update the price per kwh charge
-        # TODO when net_usage_billed is 0 maybe get previous estimation?
-        if self.basic_charge is not None and self.basic_charge not in ['', 'n/a'] and int(self.net_usage_billed) > 0:
-            self.calculated_ppkwh = (float(self.charge) - float(self.basic_charge)) / float(self.net_usage_billed)
-        else:
-            print('Basic Charge: ', self.basic_charge)
-        print('Price per kwh: ' + str(self.calculated_ppkwh))
-
-    def get_details(self):
-        charge_str = '\\n'.join([c.get_values() for c in self.charges])
-        taxes_str = '\\n'.join([t.get_values() for t in self.taxes])
-        misc_str = '\\n'.join([m.get_values() for m in self.misc_charges])
-
-        return f'{self.calculated_ppkwh}\\n{self.basic_charge.get_values()}\\n{charge_str}\\n{taxes_str}\\n{misc_str}\\n'
-
     def get_values_list(self):
+        values_list = []
+        for index, c in enumerate(self.charges):
+            c.search(self.contents)
+            values = c.get_values_list()
+            # Currently only charges can return an array of arrays
+            if isinstance(values[0], list):
+                for value in values:
+                    values_list.extend(value)
+            else:
+                values_list.extend(values)
+            if index == 0:
+                second_charge = values_list[1]
+                second_charge = float(second_charge) if second_charge != 'n/a' and second_charge != '' else 0.0
+                basic_charge = values_list[0]
+                self.basic_charge = float(basic_charge) + second_charge if basic_charge != 'n/a' else second_charge
+
         theoretical_charge = ''
-        if self.basic_charge != '' and self.calculated_ppkwh != 'n/a':
-            theoretical_charge = (float(self.current_usage) * float(self.calculated_ppkwh)) + float(self.basic_charge)
-        values_list = [
+        # Note theoretical charge doesn't account for solar that was generated and immediately used
+        # Savings would be more than this calculated number
+        # if multiple rates, average them
+        # TODO estimate cost based on previous rates when no data available
+        if self.price_per_kwh != 'n/a':
+            def get_value(index: int):
+                return float(values_list[index]) if values_list[index] != 'n/a' else 0.0
+            def average_rates_or_single(rate_1: float, rate_2: float):
+                return rate_1 if rate_2 == 0.0 else (rate_1 + rate_2) / 2.0
+            dc_rate = average_rates_or_single(get_value(3), get_value(6))
+            t_rate = average_rates_or_single(get_value(9), get_value(12))
+            r_rate = average_rates_or_single(get_value(15), get_value(18))
+            s_rate = average_rates_or_single(get_value(21), get_value(24))
+            rc_rate = average_rates_or_single(get_value(27), get_value(30))
+            total_useage = float(self.current_usage)
+
+            delivery_charge = ((total_useage * dc_rate) + (total_useage * t_rate) +
+                               (total_useage * r_rate) + (total_useage * s_rate) + (total_useage * rc_rate))
+            sc_rate = get_value(34)
+            mc_rate = average_rates_or_single(get_value(37), get_value(40))
+            supply_charge = (total_useage * sc_rate) + (total_useage * mc_rate)
+            deliver_tax_rate = get_value(43) / 100.0
+            county_tax_rate = get_value(46) / 100.0
+
+            delivery_taxes = delivery_charge * deliver_tax_rate
+            county_taxes = (self.basic_charge + delivery_taxes + supply_charge + delivery_charge) * county_tax_rate
+            tax_total = delivery_taxes + county_taxes
+
+            theoretical_charge = self.basic_charge + delivery_charge + supply_charge + tax_total
+
+        values_list_prefix = [
             self.current_year,
             int(self.excess_generation),
             int(self.current_generation),
@@ -283,19 +296,7 @@ class ElectricBillDetails:
             self.calculated_ppkwh,
             self.price_per_kwh
         ]
-        for c in self.charges:
-            values_list.extend(c.get_values_list())
-        tax_values = []
-        for t in self.taxes:
-            tax_values.extend(t.get_values_list())
-        misc_values = []
-        for m in self.misc_charges:
-            misc_values.extend(m.get_values_list())
-
-        values_list.extend(tax_values)
-        values_list.extend(misc_values)
-
-        return values_list
+        return values_list_prefix + values_list
 
     def get_str_values_list(self):
         values_list = self.get_values_list()
