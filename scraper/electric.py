@@ -105,7 +105,17 @@ class ElectricRegex:
 
 class ElectricBillDetails:
 
-    def __init__(self, contents: str, pod_id: str, meter_number: str, file_name: str):
+    previous_dc_rate = 0.0
+    previous_t_rate = 0.0
+    previous_r_rate = 0.0
+    previous_s_rate = 0.0
+    previous_rc_rate = 0.0
+    previous_sc_rate = 0.0
+    previous_mc_rate = 0.0
+    previous_delivery_tax_rate = 0.0
+    previous_county_tax_rate = 0.0
+
+    def __init__(self, contents: str, pod_id: str, meter_number: str, file_name: str, previous_rates: dict):
         self.basic_charge = None
         self.excess_generation = ''
         self.current_generation = ''
@@ -128,6 +138,8 @@ class ElectricBillDetails:
         self.file_name = file_name
         self._set_price_per_kwh()
         self._set_details()
+        self.set_previous_rates(**previous_rates)
+        self.sum_all_rates = 0.0
 
     def _set_price_per_kwh(self) -> str:
         supply_str = "providing electricity supply during this billing period was"
@@ -248,36 +260,10 @@ class ElectricBillDetails:
                 basic_charge = values_list[0]
                 self.basic_charge = float(basic_charge) + second_charge if basic_charge != 'n/a' else second_charge
 
-        theoretical_charge = ''
         # Note theoretical charge doesn't account for solar that was generated and immediately used
         # Savings would be more than this calculated number
         # if multiple rates, average them
-        # TODO estimate cost based on previous rates when no data available
-        if self.price_per_kwh != 'n/a':
-            def get_value(index: int):
-                return float(values_list[index]) if values_list[index] != 'n/a' else 0.0
-            def average_rates_or_single(rate_1: float, rate_2: float):
-                return rate_1 if rate_2 == 0.0 else (rate_1 + rate_2) / 2.0
-            dc_rate = average_rates_or_single(get_value(3), get_value(6))
-            t_rate = average_rates_or_single(get_value(9), get_value(12))
-            r_rate = average_rates_or_single(get_value(15), get_value(18))
-            s_rate = average_rates_or_single(get_value(21), get_value(24))
-            rc_rate = average_rates_or_single(get_value(27), get_value(30))
-            total_useage = float(self.current_usage)
-
-            delivery_charge = ((total_useage * dc_rate) + (total_useage * t_rate) +
-                               (total_useage * r_rate) + (total_useage * s_rate) + (total_useage * rc_rate))
-            sc_rate = get_value(34)
-            mc_rate = average_rates_or_single(get_value(37), get_value(40))
-            supply_charge = (total_useage * sc_rate) + (total_useage * mc_rate)
-            deliver_tax_rate = get_value(43) / 100.0
-            county_tax_rate = get_value(46) / 100.0
-
-            delivery_taxes = delivery_charge * deliver_tax_rate
-            county_taxes = (self.basic_charge + delivery_taxes + supply_charge + delivery_charge) * county_tax_rate
-            tax_total = delivery_taxes + county_taxes
-
-            theoretical_charge = self.basic_charge + delivery_charge + supply_charge + tax_total
+        theoretical_charge = self.calculate_theoretical_charge(values_list)
 
         values_list_prefix = [
             self.current_year,
@@ -292,12 +278,87 @@ class ElectricBillDetails:
             self.average_daily_use_current_year,
             self.basic_charge,
             theoretical_charge,
-            theoretical_charge - float(self.charge) if theoretical_charge != '' else '',
+            theoretical_charge - float(self.charge),
             self.calculated_ppkwh,
-            self.price_per_kwh
+            self.price_per_kwh,
         ]
+        values_list.append(self.sum_all_rates)
         return values_list_prefix + values_list
 
     def get_str_values_list(self):
         values_list = self.get_values_list()
         return [str(v) for v in values_list]
+
+    @classmethod
+    def get_previous_rates(cls):
+        return (cls.previous_dc_rate, cls.previous_t_rate, cls.previous_r_rate,
+                cls.previous_s_rate, cls.previous_rc_rate, cls.previous_sc_rate,
+                cls.previous_mc_rate, cls.previous_delivery_tax_rate,
+                cls.previous_county_tax_rate)
+
+    @classmethod
+    def get_previous_rates_dict(cls):
+        return {
+            'dc_rate': cls.previous_dc_rate,
+            't_rate': cls.previous_t_rate,
+            'r_rate': cls.previous_r_rate,
+            's_rate': cls.previous_s_rate,
+            'rc_rate': cls.previous_rc_rate,
+            'sc_rate': cls.previous_sc_rate,
+            'mc_rate': cls.previous_mc_rate,
+            'delivery_tax_rate': cls.previous_delivery_tax_rate,
+            'county_tax_rate': cls.previous_county_tax_rate,
+        }
+
+    @classmethod
+    def set_previous_rates(cls, dc_rate: float, t_rate: float, r_rate: float,
+                           s_rate: float, rc_rate: float, sc_rate: float,
+                           mc_rate: float, delivery_tax_rate: float, county_tax_rate: float):
+        cls.previous_dc_rate = dc_rate
+        cls.previous_t_rate = t_rate
+        cls.previous_r_rate = r_rate
+        cls.previous_s_rate = s_rate
+        cls.previous_rc_rate = rc_rate
+        cls.previous_sc_rate = sc_rate
+        cls.previous_mc_rate = mc_rate
+        cls.previous_delivery_tax_rate = delivery_tax_rate
+        cls.previous_county_tax_rate = county_tax_rate
+
+    def calculate_theoretical_charge(self, values_list: list) -> float:
+        dc_rate, t_rate, r_rate, s_rate, rc_rate, sc_rate, mc_rate, delivery_tax_rate, county_tax_rate = self.get_previous_rates()
+
+        if self.price_per_kwh != 'n/a':
+            def get_value(index: int):
+                return float(values_list[index]) if values_list[index] != 'n/a' else 0.0
+
+            def average_rates_or_single(rate_1: float, rate_2: float):
+                return rate_1 if rate_2 == 0.0 else (rate_1 + rate_2) / 2.0
+
+            dc_rate = average_rates_or_single(get_value(3), get_value(6))
+            t_rate = average_rates_or_single(get_value(9), get_value(12))
+            r_rate = average_rates_or_single(get_value(15), get_value(18))
+            s_rate = average_rates_or_single(get_value(21), get_value(24))
+            rc_rate = average_rates_or_single(get_value(27), get_value(30))
+            sc_rate = get_value(34)
+            mc_rate = average_rates_or_single(get_value(37), get_value(40))
+            delivery_tax_rate = get_value(43) / 100.0
+            county_tax_rate = get_value(46) / 100.0
+            self.set_previous_rates(
+                dc_rate, t_rate, r_rate, s_rate, rc_rate, sc_rate,
+                mc_rate, delivery_tax_rate, county_tax_rate,
+            )
+
+        total_useage = float(self.current_usage)
+        delivery_charge = ((total_useage * dc_rate) + (total_useage * t_rate) +
+                           (total_useage * r_rate) + (total_useage * s_rate) + (total_useage * rc_rate))
+
+        supply_charge = (total_useage * sc_rate) + (total_useage * mc_rate)
+
+        delivery_taxes = delivery_charge * delivery_tax_rate
+        county_taxes = (self.basic_charge + delivery_taxes + supply_charge + delivery_charge) * county_tax_rate
+        tax_total = delivery_taxes + county_taxes
+
+        self.sum_all_rates = dc_rate + t_rate + r_rate + s_rate + rc_rate + sc_rate + mc_rate
+
+        return self.basic_charge + delivery_charge + supply_charge + tax_total
+

@@ -29,19 +29,19 @@ class NysegReader:
             except:
                 print('Skipping file: ' + path)
                 continue
-
             contents = self._get_page_contents(pdf_reader, 0, 3)
-
             bill_details = ElectricBillDetails(
                 contents,
                 self.config_loader.pod_id,
                 self.config_loader.meter_number,
-                filename
+                filename,
+                self.config_loader.previous_rates,
             )
             list_bill_details.append(bill_details)
         for details in list_bill_details:
             print('Adding additional data')
             list_str_details[details.file_name] = details.get_str_values_list()
+        ConfigLoader.write_data({'previous_rates': ElectricBillDetails.get_previous_rates_dict()})
         self._write_excel_file(list_str_details)
         self._write_csv_file(list_str_details)
         self._write_data_file(list_str_details)

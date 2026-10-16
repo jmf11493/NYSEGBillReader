@@ -71,6 +71,7 @@ class NysegExcelOutput:
         'Payment & billing svcs charge',
         'Payment & billing svcs charge sales tax',
         'Payment & billing svcs GRT',
+        'Sum of All Rates',
     ]
 
     num_columns = len(columns)
@@ -145,7 +146,6 @@ class NysegExcelOutput:
         self.current_row += 1
 
     def add_totals(self):
-        # TODO
         pass
         # TODO insert function
         # self.worksheet.write(self.current_row + 1, 11, sum(theoretical_charges), currency_format)
@@ -177,8 +177,8 @@ class NysegExcelOutput:
         self.make_comparative_charts()
 
     def make_comparative_charts(self):
-        charts = ['KWH per Month', 'Bill Cost Per Month', 'Cost Per Killowatt Hour', 'Delivery Charge Rate', 'Transition Charge Rate', 'Average Daily Temp', 'Average Daily Use KWH']
-        data_columns = ['D', 'F', 'O', 'S', 'Y', 'I', 'J']
+        charts = ['KWH per Month', 'Bill Cost Per Month', 'Sum of All Rates', 'Cost Per Killowatt Hour', 'Delivery Charge Rate', 'Transition Charge Rate', 'Average Daily Temp', 'Average Daily Use KWH']
+        data_columns = ['D', 'F', 'BO', 'O', 'S', 'Y', 'I', 'J']
         for chart, column in zip(charts, data_columns):
             self.make_comparative_chart(chart, column)
 
