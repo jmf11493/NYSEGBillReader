@@ -43,7 +43,6 @@ class NysegReader:
             list_str_details[details.file_name] = details.get_str_values_list()
         ConfigLoader.write_data({'previous_rates': ElectricBillDetails.get_previous_rates_dict()})
         self._write_excel_file(list_str_details)
-        self._write_csv_file(list_str_details)
         self._write_data_file(list_str_details)
 
     def _write_excel_file(self, list_bill_details: dict):
@@ -55,24 +54,7 @@ class NysegReader:
         excel_file.make_chart()
         excel_file.close_file()
 
-    def _write_csv_file(self, list_bill_details: dict):
-        directory = self.config_loader.output_csv_directory
-
-        if os.path.exists(directory):
-            os.remove(directory)
-        csv_file = open(directory, "a")
-
-        for file_name, original_list in list_bill_details.items():
-            # TODO don't re-order
-            write_list = [file_name, original_list[6], original_list[7]]
-            write_list.extend(original_list[0:6])
-            write_list.extend(original_list[8:])
-            csv_file.write(','.join(write_list) + '\n')
-
-        csv_file.close()
-
     def _write_data_file(self, list_bill_details: dict):
-        # TODO when csv file and this file are in sync can clean up other method
         directory = self.config_loader.output_data_directory
 
         if os.path.exists(directory):
